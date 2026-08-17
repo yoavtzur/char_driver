@@ -1,3 +1,5 @@
+// Predates lkmctl - a minimal, throwaway test that exercises the ioctl calls directly,
+// without any CLI wrapping around them.
 #include <stdio.h>      // printf, perror
 #include <fcntl.h>      // open(), O_RDWR
 #include <unistd.h>     // close()

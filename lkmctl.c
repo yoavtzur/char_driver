@@ -17,6 +17,8 @@ static void print_usage(const char *prog_name) {
     fprintf(stderr, "  %s reset          - reset the device buffer (via ioctl)\n", prog_name);
 }
 
+// write()/read()/ioctl() below are syscalls - each one is the line that crosses from
+// userspace into the kernel and gets dispatched to the matching lkm_* function.
 static int cmd_write(int fd, const char *text) {
     ssize_t written = write(fd, text, strlen(text));
     if (written < 0) {
@@ -34,7 +36,7 @@ static int cmd_read(int fd) {
         perror("read");
         return 1;
     }
-    buf[bytes_read] = '\0';
+    buf[bytes_read] = '\0';  // read() gives raw bytes, not a C string - terminate before printf
     printf("%s\n", buf);
     return 0;
 }
@@ -62,7 +64,7 @@ int main(int argc, char *argv[]) {
     int fd;
     int ret;
 
-    if (argc < 2) {
+    if (argc < 2) {  // argv[1] is the subcommand ("write"/"read"/"size"/"reset")
         print_usage(argv[0]);
         return 1;
     }

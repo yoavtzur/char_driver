@@ -12,7 +12,7 @@
 
 #define DEVICE_NAME "lkm_skeleton"
 #define INITIAL_BUF_LEN 256
-#define MAX_BUFFER_SIZE (64 * 1024)
+#define MAX_BUFFER_SIZE (64 * 1024)  // cap so one write() can't force unbounded kernel allocation
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Yoav Tzur");
@@ -24,9 +24,9 @@ static struct cdev my_cdev;
 static struct class *my_class;
 
 static char *device_buffer;
-static size_t buffer_capacity = 0;
-static size_t buffer_data_size = 0;
-static DEFINE_MUTEX(lkm_mutex);
+static size_t buffer_capacity = 0;  // how much is allocated
+static size_t buffer_data_size = 0; // how much of it is real content (<= buffer_capacity)
+static DEFINE_MUTEX(lkm_mutex);     // guards device_buffer/buffer_capacity/buffer_data_size
 
 static int lkm_open(struct inode *inode, struct file *file) {
     printk(KERN_INFO "LKM Skeleton: Device opened.\n");
@@ -44,13 +44,14 @@ static ssize_t lkm_read(struct file *file, char __user *user_buf, size_t count, 
     if (mutex_lock_interruptible(&lkm_mutex))
         return -ERESTARTSYS;
 
-    if (*offset >= buffer_data_size) {
+    if (*offset >= buffer_data_size) {  // already read everything -> EOF
         mutex_unlock(&lkm_mutex);
         return 0;
     }
 
     bytes_to_copy = min((size_t)(buffer_data_size - *offset), count);
 
+    // copy_to_user: kernel code can't dereference a userspace pointer directly
     if (copy_to_user(user_buf, device_buffer + *offset, bytes_to_copy) != 0) {
         mutex_unlock(&lkm_mutex);
         return -EFAULT;
@@ -63,14 +64,17 @@ static ssize_t lkm_read(struct file *file, char __user *user_buf, size_t count, 
     return bytes_to_copy;
 }
 
+// Every write() overwrites the buffer from the start - not an append.
 static ssize_t lkm_write(struct file *file, const char __user *user_buf, size_t count, loff_t *offset) {
     size_t bytes_to_copy = min((size_t)count, (size_t)(MAX_BUFFER_SIZE - 1));
-    size_t needed_capacity = bytes_to_copy + 1;
+    size_t needed_capacity = bytes_to_copy + 1;  // +1 for the trailing '\0'
 
     if (mutex_lock_interruptible(&lkm_mutex))
         return -ERESTARTSYS;
 
     if (needed_capacity > buffer_capacity) {
+        // Use a temp pointer: if krealloc fails, device_buffer must keep pointing at the
+        // still-valid old allocation, or we'd leak it.
         char *new_buf = krealloc(device_buffer, needed_capacity, GFP_KERNEL);
         if (!new_buf) {
             mutex_unlock(&lkm_mutex);
@@ -88,7 +92,7 @@ static ssize_t lkm_write(struct file *file, const char __user *user_buf, size_t 
 
     buffer_data_size = bytes_to_copy;
     device_buffer[buffer_data_size] = '\0';
-    memset(device_buffer + buffer_data_size + 1, 0, buffer_capacity - buffer_data_size - 1);
+    memset(device_buffer + buffer_data_size + 1, 0, buffer_capacity - buffer_data_size - 1);  // clear stale leftover data
 
     printk(KERN_INFO "LKM Skeleton: Received %zu bytes from user.\n", bytes_to_copy);
 
@@ -96,6 +100,7 @@ static ssize_t lkm_write(struct file *file, const char __user *user_buf, size_t 
     return bytes_to_copy;
 }
 
+// cmd is a packed integer from the _IO/_IOR macros (see the header), not a string.
 static long lkm_ioctl(struct file *file, unsigned int cmd, unsigned long arg) {
     int current_size;
 
@@ -126,6 +131,7 @@ static long lkm_ioctl(struct file *file, unsigned int cmd, unsigned long arg) {
     return 0;
 }
 
+// VFS dispatch table: the kernel routes every syscall on /dev/lkm_skeleton through here.
 static struct file_operations fops = {
     .owner = THIS_MODULE,
     .open = lkm_open,
@@ -135,6 +141,8 @@ static struct file_operations fops = {
     .unlocked_ioctl = lkm_ioctl,
 };
 
+// Runs once on insmod. Each failure path below unwinds only what was already set up,
+// in reverse order.
 static int __init lkm_skeleton_init(void) {
     int ret;
 
@@ -166,7 +174,7 @@ static int __init lkm_skeleton_init(void) {
         return ret;
     }
 
-    my_class = class_create(DEVICE_NAME);
+    my_class = class_create(DEVICE_NAME);  // needed so udev creates /dev/lkm_skeleton automatically
     if (IS_ERR(my_class)) {
         printk(KERN_ALERT "LKM Skeleton: Failed to create device class.\n");
         cdev_del(&my_cdev);
@@ -188,6 +196,7 @@ static int __init lkm_skeleton_init(void) {
     return 0;
 }
 
+// Runs once on rmmod - exact reverse order of init().
 static void __exit lkm_skeleton_exit(void) {
     device_destroy(my_class, dev_num);
     class_destroy(my_class);
@@ -197,5 +206,6 @@ static void __exit lkm_skeleton_exit(void) {
     printk(KERN_INFO "LKM Skeleton: Module unloaded from kernel space.\n");
 }
 
+// A kernel module has no main() - these register our entry/exit points instead.
 module_init(lkm_skeleton_init);
 module_exit(lkm_skeleton_exit);
