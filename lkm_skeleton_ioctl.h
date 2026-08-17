@@ -6,7 +6,7 @@
 
 #include <linux/ioctl.h>
 
-#define LKM_IOC_MAGIC 'k'
+#define LKM_IOC_MAGIC 'J'  // chosen from Documentation/userspace-api/ioctl/ioctl-number.rst - unused, unlike 'k'
 
 // _IO/_IOR pack {magic, sequence, direction, size} into one unique command integer.
 #define LKM_IOC_RESET    _IO(LKM_IOC_MAGIC, 1)
