@@ -17,8 +17,8 @@
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Yoav Tzur");
-MODULE_DESCRIPTION("Milestone 2: Character Device Registration");
-MODULE_VERSION("2.0");
+MODULE_DESCRIPTION("Character device driver with a dynamic buffer, ioctl commands, and blocking I/O");
+MODULE_VERSION("1.0");
 
 static dev_t dev_num;
 static struct cdev my_cdev;
