@@ -8,6 +8,7 @@
 #include <linux/string.h>
 #include <linux/mutex.h>
 #include <linux/slab.h>
+#include <linux/wait.h>
 #include "lkm_skeleton_ioctl.h"
 
 #define DEVICE_NAME "lkm_skeleton"
@@ -27,6 +28,7 @@ static char *device_buffer;
 static size_t buffer_capacity = 0;  // how much is allocated
 static size_t buffer_data_size = 0; // how much of it is real content (<= buffer_capacity)
 static DEFINE_MUTEX(lkm_mutex);     // guards device_buffer/buffer_capacity/buffer_data_size
+static DECLARE_WAIT_QUEUE_HEAD(lkm_wait_queue);  // readers block here while the buffer is empty
 
 static int lkm_open(struct inode *inode, struct file *file) {
     printk(KERN_INFO "LKM Skeleton: Device opened.\n");
@@ -44,7 +46,19 @@ static ssize_t lkm_read(struct file *file, char __user *user_buf, size_t count, 
     if (mutex_lock_interruptible(&lkm_mutex))
         return -ERESTARTSYS;
 
-    if (*offset >= buffer_data_size) {  // already read everything -> EOF
+    // Block here while the device is empty, instead of returning EOF immediately.
+    // Release the mutex before sleeping (a sleeping reader must not hold the lock),
+    // and re-check the condition in a loop after waking - another reader may have
+    // beaten us to the data, or write() may not have actually run yet.
+    while (buffer_data_size == 0) {
+        mutex_unlock(&lkm_mutex);
+        if (wait_event_interruptible(lkm_wait_queue, buffer_data_size > 0))
+            return -ERESTARTSYS;  // woken by a signal, not by new data
+        if (mutex_lock_interruptible(&lkm_mutex))
+            return -ERESTARTSYS;
+    }
+
+    if (*offset >= buffer_data_size) {  // this open() already consumed everything available
         mutex_unlock(&lkm_mutex);
         return 0;
     }
@@ -97,6 +111,7 @@ static ssize_t lkm_write(struct file *file, const char __user *user_buf, size_t 
     printk(KERN_INFO "LKM Skeleton: Received %zu bytes from user.\n", bytes_to_copy);
 
     mutex_unlock(&lkm_mutex);
+    wake_up_interruptible(&lkm_wait_queue);  // wake any readers blocked waiting for data
     return bytes_to_copy;
 }
 
