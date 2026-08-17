@@ -1,0 +1,19 @@
+# Kernel module build artifacts
+*.o
+*.ko
+*.mod
+*.mod.c
+.*.cmd
+Module.symvers
+modules.order
+.tmp_versions/
+
+# Userspace compiled binaries
+lkmctl
+test_ioctl
+
+# Local tool state, not part of the project
+.claude/
+
+# Personal project instructions, kept local only
+CLAUDE.md
